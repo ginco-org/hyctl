@@ -1,0 +1,47 @@
+[package]
+name = "hytctl"
+version = "0.1.0"
+edition = "2024"
+description = "CLI for installing and running the Hytale game client with multi-account and multi-version support"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# Crypto (PKCE)
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+open = "5"
+
+# Paths
+dirs = "6"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Streaming downloads
+futures-util = "0.3"
+# File watching/completion
+indicatif = "0.17"
+
+# Archive extraction
+tar = "0.4.46"
+flate2 = "1.1.9"
+brotli = "7"
