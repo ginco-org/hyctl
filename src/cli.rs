@@ -1,190 +1,118 @@
 use clap::{Parser, Subcommand};
 
-/// CLI for installing and running the Hytale game client.
+/// hyctl — Hytale launcher
 #[derive(Parser)]
-#[command(version, about)]
+#[command(name = "hyctl", version)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
+
+    /// Disable ANSI color output
+    #[arg(long, global = true)]
+    pub no_color: bool,
 }
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// Authenticate with Hytale OAuth.
+    /// Launch the game client
+    Launch {
+        /// Profile to launch with (default: default account's default profile)
+        #[arg(short, long, value_name = "name")]
+        profile: Option<String>,
+
+        /// Game version to launch (default: latest)
+        #[arg(short, long, value_name = "ver")]
+        version: Option<String>,
+
+        /// Run in the background; return immediately after launch
+        #[arg(short, long)]
+        background: bool,
+
+        /// Extra arguments passed to the game client
+        #[arg(last = true)]
+        extra_args: Vec<String>,
+    },
+
+    /// Run a game server
+    Serve {
+        /// Profile to use (default: default account's default profile)
+        #[arg(short, long, value_name = "name")]
+        profile: Option<String>,
+
+        /// Server data directory
+        #[arg(short, long, value_name = "path", default_value = "./server")]
+        dir: String,
+
+        /// Game version to run (default: latest)
+        #[arg(short, long, value_name = "ver")]
+        version: Option<String>,
+
+        /// Run in the background; return immediately after the server starts
+        #[arg(short, long)]
+        background: bool,
+
+        /// Arguments passed directly to the server process
+        #[arg(last = true)]
+        extra_args: Vec<String>,
+    },
+
+    /// Manage accounts and profiles
     Auth {
         #[command(subcommand)]
         sub: AuthCommand,
     },
 
-    /// Manage accounts.
-    Account {
+    /// Manage installed game versions
+    Asset {
         #[command(subcommand)]
-        sub: AccountCommand,
+        sub: AssetCommand,
     },
-
-    /// Manage profiles.
-    Profile {
-        #[command(subcommand)]
-        sub: ProfileCommand,
-    },
-
-    /// Manage game versions.
-    Version {
-        #[command(subcommand)]
-        sub: VersionCommand,
-    },
-
-    /// Download game client assets for a version.
-    Install {
-        /// Version to install (e.g. 1.0.0, 0.6.0-pre.2), or channel name for latest
-        /// (release, pre-release). Defaults to latest release.
-        version: Option<String>,
-
-        /// Target output directory. Defaults to data dir.
-        #[arg(short, long)]
-        output: Option<String>,
-    },
-
-    /// Launch the game client.
-    Run {
-        /// Profile UUID or username to launch with.
-        profile: Option<String>,
-
-        /// Account label to use.
-        #[arg(short, long)]
-        account: Option<String>,
-
-        /// Version to run (e.g. 1.0.0) or channel name for latest (release, pre-release).
-        #[arg(short, long)]
-        version: Option<String>,
-
-        /// Detach immediately after launch without waiting for the game to exit.
-        #[arg(short, long)]
-        detach: bool,
-
-        /// Extra JVM arguments.
-        #[arg(last = true)]
-        extra_args: Vec<String>,
-    },
-
-    /// Manage and run the game server.
-    Server {
-        #[command(subcommand)]
-        sub: ServerCommand,
-    },
-
 }
 
 #[derive(Subcommand)]
 pub enum AuthCommand {
-    /// Authenticate via browser (PKCE flow). Downloads and launches the game.
-    Login {
-        /// Account label for local storage.
-        #[arg(short, long)]
-        label: Option<String>,
-    },
-
-
-    /// Refresh the access token for an account.
-    Refresh {
-        /// Account label to refresh.
-        account: String,
-    },
-
-    /// Log out (remove stored tokens).
-    Logout {
-        /// Account label to remove.
-        account: String,
-    },
-
-    /// Show current auth status.
-    Status,
-}
-
-#[derive(Subcommand)]
-pub enum AccountCommand {
-    /// List configured accounts.
+    /// List saved accounts and their profiles
     List,
 
-    /// Set a default account.
-    Default {
-        /// Account label to set as default.
+    /// Add an account (opens browser for login)
+    Add,
+
+    /// Remove a saved account
+    Remove {
+        /// Account label to remove
         account: String,
     },
 
-    /// Remove an account.
-    Remove {
-        /// Account label to remove.
+    /// Set the default account
+    Default {
+        /// Account label to set as default
         account: String,
     },
 }
 
 #[derive(Subcommand)]
-pub enum ProfileCommand {
-    /// List profiles across all accounts.
-    List {
-        /// Account label to list profiles for.
-        #[arg(short, long)]
-        account: Option<String>,
-    },
+pub enum AssetCommand {
+    /// List installed game versions
+    List,
 
-    /// Set a default profile for an account.
-    Default {
-        /// Profile username or UUID.
-        profile: String,
-
-        /// Account label.
-        #[arg(short, long)]
-        account: Option<String>,
-    },
-
-    /// Fetch fresh launcher data for an account.
-    Refresh {
-        /// Account label.
-        account: Option<String>,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum VersionCommand {
-    /// List available versions.
-    List {
-        /// Patchline channel: release or pre-release.
-        #[arg(short, long, default_value = "release")]
-        channel: String,
-    },
-
-    /// Set a default version.
-    Default {
-        /// Version string (e.g. 1.0.0).
-        version: String,
-    },
-
-    /// Show currently installed versions.
-    Installed,
-
-    /// Remove a downloaded version.
-    Remove {
-        /// Version string (e.g. 1.0.0).
-        version: String,
-    },
-}
-
-
-#[derive(Subcommand)]
-pub enum ServerCommand {
-    /// Launch the game server.
-    Run {
-        /// Version to run (e.g. 1.0.0) or channel name for latest (release, pre-release).
-        #[arg(short, long)]
+    /// Download and install a game version
+    Install {
+        /// Version to install, or channel name for latest (release, pre-release)
         version: Option<String>,
-
-        /// Detach immediately after launch without waiting for the server to exit.
-        #[arg(short, long)]
-        detach: bool,
-
-        /// Extra JVM arguments.
-        #[arg(last = true)]
-        extra_args: Vec<String>,
     },
+
+    /// Remove an installed version
+    Remove {
+        /// Version string to remove
+        version: String,
+    },
+
+    /// Verify integrity of an installed version
+    Verify {
+        /// Version string to verify
+        version: String,
+    },
+
+    /// Remove all versions except the latest
+    Prune,
 }

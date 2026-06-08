@@ -12,18 +12,17 @@ pub async fn launch_game(
     install_dir: &Path,
     version_label: &str,
     extra_args: &[String],
-    detach: bool,
+    background: bool,
 ) -> Result<()> {
     let client_bin = install_dir.join("Client").join("HytaleClient");
 
     if !client_bin.exists() {
         anyhow::bail!(
             "client binary not found at {}.\n\
-             Run `{} install {version_label}` with a version that includes a client.\n\
+             Run `{} asset install {version_label}` with a version that includes a client.\n\
              The latest release build includes the HytaleClient binary.",
             client_bin.display(),
             crate::BIN_NAME,
-            version_label = version_label,
         )
     }
 
@@ -33,10 +32,10 @@ pub async fn launch_game(
         profile.username, profile.uuid
     );
     let session_tokens = session::create_session(access_token, &profile.uuid).await?;
-    launch_client(install_dir, &client_bin, &jre, profile, &session_tokens, extra_args, detach)
+    launch_client(install_dir, &client_bin, &jre, profile, &session_tokens, extra_args, background)
 }
 
-pub(crate) async fn ensure_jre(install_dir: &Path) -> Result<PathBuf> {
+pub async fn ensure_jre(install_dir: &Path) -> Result<PathBuf> {
     if let Ok(p) = find_jre(install_dir) {
         return Ok(p);
     }
@@ -54,7 +53,7 @@ fn launch_client(
     profile: &crate::config::Profile,
     session_tokens: &crate::session::SessionTokens,
     extra_args: &[String],
-    detach: bool,
+    background: bool,
 ) -> Result<()> {
     let user_dir = config::data_dir().join("userdata");
     let client_dir = client_bin.parent().unwrap_or(install_dir);
@@ -88,11 +87,16 @@ fn launch_client(
         cmd.arg(arg);
     }
 
-    spawn_or_wait(&mut cmd, "HytaleClient", detach)
+    spawn_or_wait(&mut cmd, "HytaleClient", background)
 }
 
-
-pub fn launch_server(install_dir: &Path, java: &Path, extra_args: &[String], detach: bool) -> Result<()> {
+pub fn launch_server(
+    install_dir: &Path,
+    java: &Path,
+    data_dir: &Path,
+    extra_args: &[String],
+    background: bool,
+) -> Result<()> {
     let start_sh = install_dir.join("start.sh");
     if start_sh.exists() {
         info!("Launching server via start.sh");
@@ -107,28 +111,26 @@ pub fn launch_server(install_dir: &Path, java: &Path, extra_args: &[String], det
         for arg in extra_args {
             cmd.arg(arg);
         }
-        cmd.current_dir(install_dir);
+        cmd.current_dir(data_dir);
         cmd.env("PATH", new_path);
-        spawn_or_wait(&mut cmd, "start.sh", detach)?;
-        return Ok(());
+        return spawn_or_wait(&mut cmd, "start.sh", background);
     }
 
-    // No start.sh — launch JAR directly with our provisioned JRE.
     let server_jar = install_dir.join("Server").join("HytaleServer.jar");
     let assets = install_dir.join("Assets.zip");
 
     let mut cmd = std::process::Command::new(java);
-    cmd.current_dir(server_jar.parent().unwrap_or(install_dir));
+    cmd.current_dir(data_dir);
     cmd.arg("-jar").arg(&server_jar);
     cmd.arg("--assets").arg(&assets);
     for arg in extra_args {
         cmd.arg(arg);
     }
-    spawn_or_wait(&mut cmd, "server", detach)
+    spawn_or_wait(&mut cmd, "server", background)
 }
 
-fn spawn_or_wait(cmd: &mut std::process::Command, label: &str, detach: bool) -> Result<()> {
-    if detach {
+fn spawn_or_wait(cmd: &mut std::process::Command, label: &str, background: bool) -> Result<()> {
+    if background {
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
@@ -152,15 +154,12 @@ fn spawn_or_wait(cmd: &mut std::process::Command, label: &str, detach: bool) -> 
     Ok(())
 }
 
-/// Find our provisioned JRE. Stored at `<data_dir>/jre/bin/java`.
 fn find_jre(install_dir: &Path) -> Result<PathBuf> {
-    // Per-install JRE (future: bundled with install).
     let bundled = install_dir.join("jre").join("bin").join("java");
     if bundled.is_file() {
         return Ok(bundled);
     }
 
-    // Shared JRE provisioned automatically on first launch.
     let shared = config::data_dir().join("jre").join("bin").join("java");
     if shared.is_file() {
         return Ok(shared);

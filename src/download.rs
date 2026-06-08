@@ -158,7 +158,7 @@ struct VersionResponse {
 /// Version manifest returned by the signed manifest URL.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct BuildManifest {
+pub struct BuildManifest {
     pub version: String,
     pub download_url: String,
     pub sha256: Option<String>,
@@ -292,7 +292,7 @@ pub async fn install_jre(version: &str, dest_dir: &Path) -> Result<()> {
     let tmp = dest_dir
         .parent()
         .unwrap_or(dest_dir)
-        .join(format!("hyctl-jre-{version}.tar.gz"));
+        .join(format!("{}-jre-{version}.tar.gz", crate::BIN_NAME));
 
     download_file(&url, &tmp, &format!("JRE {version}")).await?;
 
