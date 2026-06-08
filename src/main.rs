@@ -19,7 +19,7 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::builder()
-                .with_default_directive("hytctl=info".parse().unwrap())
+                .with_default_directive("hyctl=info".parse().unwrap())
                 .from_env_lossy(),
         )
         .init();

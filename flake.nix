@@ -1,5 +1,5 @@
 {
-  description = "hytctl — Hytale game launcher CLI";
+  description = "hyctl — Hytale game launcher CLI";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -39,8 +39,8 @@
           rustc = pkgs.fenix.stable.rustc;
         };
 
-        hytctl-unwrapped = rustPlatform.buildRustPackage {
-          pname = "hytctl";
+        hyctl-unwrapped = rustPlatform.buildRustPackage {
+          pname = "hyctl";
           version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
@@ -79,20 +79,20 @@
         # Wrapped binary: prepends Nix store lib paths to LD_LIBRARY_PATH so
         # the bundled SDL3 can dlopen its backends (wayland, X11, GL, etc.).
         # Simpler than a full FHS env — no bubblewrap needed.
-        hytctl = pkgs.symlinkJoin {
-          name = "hytctl";
-          paths = [ hytctl-unwrapped ];
+        hyctl = pkgs.symlinkJoin {
+          name = "hyctl";
+          paths = [ hyctl-unwrapped ];
           nativeBuildInputs = [ pkgs.makeWrapper ];
           postBuild = ''
-            wrapProgram $out/bin/hytctl \
+            wrapProgram $out/bin/hyctl \
               --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (gameLibs pkgs)}
           '';
         };
       in
       {
         packages = pkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
-          default = hytctl;
-          unwrapped = hytctl-unwrapped;
+          default = hyctl;
+          unwrapped = hyctl-unwrapped;
         };
 
         devShells.default = pkgs.mkShell {
@@ -106,7 +106,7 @@
           ];
 
           RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
-          RUST_LOG = "hytctl=info";
+          RUST_LOG = "hyctl=info";
 
           # Let `cargo run -- run` find the bundled SDL3 backends at runtime.
           shellHook = ''

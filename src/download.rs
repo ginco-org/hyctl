@@ -292,7 +292,7 @@ pub async fn install_jre(version: &str, dest_dir: &Path) -> Result<()> {
     let tmp = dest_dir
         .parent()
         .unwrap_or(dest_dir)
-        .join(format!("hytctl-jre-{version}.tar.gz"));
+        .join(format!("hyctl-jre-{version}.tar.gz"));
 
     download_file(&url, &tmp, &format!("JRE {version}")).await?;
 

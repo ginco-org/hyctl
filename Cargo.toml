@@ -1,5 +1,5 @@
 [package]
-name = "hytctl"
+name = "hyctl"
 version = "0.1.0"
 edition = "2024"
 description = "CLI for installing and running the Hytale game client with multi-account and multi-version support"
