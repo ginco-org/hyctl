@@ -11,6 +11,8 @@ pub async fn launch_game(
     profile: &Profile,
     install_dir: &Path,
     version_label: &str,
+    server: Option<&str>,
+    world: Option<&str>,
     extra_args: &[String],
     background: bool,
 ) -> Result<()> {
@@ -32,7 +34,7 @@ pub async fn launch_game(
         profile.username, profile.uuid
     );
     let session_tokens = session::create_session(access_token, &profile.uuid).await?;
-    launch_client(install_dir, &client_bin, &jre, profile, &session_tokens, extra_args, background)
+    launch_client(install_dir, &client_bin, &jre, profile, &session_tokens, server, world, extra_args, background)
 }
 
 pub async fn ensure_jre(install_dir: &Path) -> Result<PathBuf> {
@@ -45,13 +47,14 @@ pub async fn ensure_jre(install_dir: &Path) -> Result<PathBuf> {
     crate::download::install_jre(ver, &dest).await?;
     find_jre(install_dir)
 }
-
 fn launch_client(
     install_dir: &Path,
     client_bin: &Path,
     java_exec: &Path,
     profile: &crate::config::Profile,
     session_tokens: &crate::session::SessionTokens,
+    server: Option<&str>,
+    world: Option<&str>,
     extra_args: &[String],
     background: bool,
 ) -> Result<()> {
@@ -83,6 +86,12 @@ fn launch_client(
     cmd.arg("--name").arg(&profile.username);
     cmd.arg("--session-token").arg(&session_tokens.session_token);
     cmd.arg("--identity-token").arg(&session_tokens.identity_token);
+    if let Some(server) = server {
+        cmd.arg("--server").arg(server);
+    }
+    if let Some(world) = world {
+        cmd.arg("--world").arg(world);
+    }
     for arg in extra_args {
         cmd.arg(arg);
     }

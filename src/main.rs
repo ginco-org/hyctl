@@ -31,8 +31,8 @@ async fn main() {
 
 async fn run(cli: Cli) -> Result<()> {
     match cli.command {
-        Command::Launch { profile, version, background, extra_args } => {
-            handle_launch(profile, version, background, &extra_args).await
+        Command::Launch { profile, version, background, server, world, extra_args } => {
+            handle_launch(profile, version, background, server, world, &extra_args).await
         }
         Command::Serve { profile, dir, version, background, extra_args } => {
             handle_serve(profile, dir, version, background, &extra_args).await
@@ -48,7 +48,10 @@ async fn handle_launch(
     profile: Option<String>,
     version: Option<String>,
     background: bool,
+    server: Option<String>,
+    world: Option<String>,
     extra_args: &[String],
+
 ) -> Result<()> {
     let config = config::load_full_config();
 
@@ -78,6 +81,8 @@ async fn handle_launch(
             prof,
             &v.install_path,
             &v.build,
+            server.as_deref(),
+            world.as_deref(),
             extra_args,
             background,
         )
@@ -117,7 +122,7 @@ async fn handle_launch(
         }
     };
 
-    launch::launch_game(&access_token, acct, prof, &install_dir, &build, extra_args, background).await
+    launch::launch_game(&access_token, acct, prof, &install_dir, &build, server.as_deref(), world.as_deref(), extra_args, background).await
 }
 
 // ── Serve ─────────────────────────────────────────────────────────────────

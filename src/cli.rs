@@ -28,6 +28,14 @@ pub enum Command {
         #[arg(short, long)]
         background: bool,
 
+        /// Connect to the specified server
+        #[arg(short, long, value_name = "server")]
+        server: Option<String>,
+
+        /// Load the specified world
+        #[arg(short, long, value_name = "world")]
+        world: Option<String>,
+
         /// Extra arguments passed to the game client
         #[arg(last = true)]
         extra_args: Vec<String>,
