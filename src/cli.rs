@@ -55,6 +55,10 @@ pub enum Command {
         #[arg(short, long, value_name = "ver")]
         version: Option<String>,
 
+        /// Custom assets path (directory or zip) to use instead of the installed Assets.zip
+        #[arg(short = 'a', long, value_name = "path")]
+        assets: Option<String>,
+
         /// Run in the background; return immediately after the server starts
         #[arg(short, long)]
         background: bool,

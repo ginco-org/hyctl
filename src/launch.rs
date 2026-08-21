@@ -103,6 +103,7 @@ pub fn launch_server(
     install_dir: &Path,
     java: &Path,
     data_dir: &Path,
+    assets: Option<&Path>,
     extra_args: &[String],
     background: bool,
 ) -> Result<()> {
@@ -117,6 +118,15 @@ pub fn launch_server(
 
         let mut cmd = std::process::Command::new("bash");
         cmd.arg(&start_sh);
+        if let Some(assets) = assets {
+            // start.sh appends its own default `--assets ../Assets.zip` before
+            // forwarding "$@", so the custom pack loads alongside it, not instead.
+            info!(
+                "Passing --assets {} to start.sh (start.sh also passes its default Assets.zip)",
+                assets.display()
+            );
+            cmd.arg("--assets").arg(assets);
+        }
         for arg in extra_args {
             cmd.arg(arg);
         }
@@ -126,12 +136,20 @@ pub fn launch_server(
     }
 
     let server_jar = install_dir.join("Server").join("HytaleServer.jar");
-    let assets = install_dir.join("Assets.zip");
 
     let mut cmd = std::process::Command::new(java);
     cmd.current_dir(data_dir);
     cmd.arg("-jar").arg(&server_jar);
-    cmd.arg("--assets").arg(&assets);
+    match assets {
+        Some(assets) => {
+            info!("Using custom assets: {}", assets.display());
+            cmd.arg("--assets").arg(assets);
+        }
+        None => {
+            let assets = install_dir.join("Assets.zip");
+            cmd.arg("--assets").arg(&assets);
+        }
+    }
     for arg in extra_args {
         cmd.arg(arg);
     }

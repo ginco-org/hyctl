@@ -34,8 +34,8 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Launch { profile, version, background, server, world, extra_args } => {
             handle_launch(profile, version, background, server, world, &extra_args).await
         }
-        Command::Serve { profile, dir, version, background, extra_args } => {
-            handle_serve(profile, dir, version, background, &extra_args).await
+        Command::Serve { profile, dir, version, background, assets, extra_args } => {
+            handle_serve(profile, dir, version, background, assets, &extra_args).await
         }
         Command::Auth { sub } => handle_auth(sub).await,
         Command::Asset { sub } => handle_asset(sub).await,
@@ -132,8 +132,21 @@ async fn handle_serve(
     dir: String,
     version: Option<String>,
     background: bool,
+    assets: Option<String>,
     extra_args: &[String],
 ) -> Result<()> {
+    let assets = match assets {
+        Some(p) => {
+            let path = std::path::PathBuf::from(&p);
+            anyhow::ensure!(path.exists(), "assets path does not exist: {p}");
+            Some(
+                path.canonicalize()
+                    .with_context(|| format!("failed to resolve assets path: {p}"))?,
+            )
+        }
+        None => None,
+    };
+
     let config = config::load_full_config();
 
     let acct = if let Some(p) = profile.as_deref() {
@@ -185,7 +198,7 @@ async fn handle_serve(
         .with_context(|| format!("failed to create server directory: {dir}"))?;
 
     let jre = launch::ensure_jre(&install_dir).await?;
-    launch::launch_server(&install_dir, &jre, &data_dir, extra_args, background)
+    launch::launch_server(&install_dir, &jre, &data_dir, assets.as_deref(), extra_args, background)
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────
