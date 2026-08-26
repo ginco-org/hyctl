@@ -87,7 +87,12 @@ pub enum AuthCommand {
     List,
 
     /// Add an account (opens browser for login)
-    Add,
+    Add {
+        /// Authenticate as a dedicated server using the hytale-server OAuth client
+        /// (device code flow; grants the `auth:server` scope required by `hyctl serve`)
+        #[arg(long)]
+        server: bool,
+    },
 
     /// Remove a saved account
     Remove {

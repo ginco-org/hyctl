@@ -218,6 +218,127 @@ fn url_decode(s: &str) -> Result<String> {
     }
     Ok(result)
 }
+// ── Device Code Flow (RFC 8628) ────────────────────────────────────────
+
+const OAUTH_DEVICE_AUTH: &str = "https://oauth.accounts.hytale.com/oauth2/device/auth";
+
+#[derive(Debug, Deserialize)]
+struct DeviceAuthResponse {
+    device_code: String,
+    user_code: String,
+    verification_uri: String,
+    #[serde(default)]
+    verification_uri_complete: Option<String>,
+    expires_in: u64,
+    interval: u64,
+}
+
+/// Perform the OAuth 2.0 Device Authorization Grant for the given client.
+///
+/// Used for headless dedicated-server authentication with the `hytale-server`
+/// client, which grants the `auth:server` scope required to run a server.
+pub async fn device_login(client_id: &str, scope: &str) -> Result<Tokens> {
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(OAUTH_DEVICE_AUTH)
+        .form(&[("client_id", client_id), ("scope", scope)])
+        .send()
+        .await
+        .context("device authorization request failed")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("device authorization error ({status}): {text}");
+    }
+
+    let da: DeviceAuthResponse = resp
+        .json()
+        .await
+        .context("failed to parse device authorization response")?;
+
+    let complete = da
+        .verification_uri_complete
+        .unwrap_or_else(|| format!("{}?user_code={}", da.verification_uri, da.user_code));
+
+    println!();
+    println!("Device authorization required.");
+    println!("  Visit: {}", da.verification_uri);
+    println!("  Code:  {}", da.user_code);
+    println!("  Or open: {}", complete);
+    println!();
+    let _ = open::that(&complete);
+    info!(
+        "Waiting for device authorization (expires in {}s)",
+        da.expires_in
+    );
+
+    let interval = da.interval.max(1);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(da.expires_in);
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        if std::time::Instant::now() > deadline {
+            anyhow::bail!("device authorization timed out");
+        }
+
+        let resp = client
+            .post(format!("{OAUTH_BASE}/token"))
+            .form(&[
+                ("client_id", client_id),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                ("device_code", &da.device_code),
+            ])
+            .send()
+            .await
+            .context("device token poll request failed")?;
+
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        let err = parsed.get("error").and_then(|v| v.as_str()).map(str::to_string);
+
+        if status.is_success() {
+            let tr: TokenResponse = serde_json::from_value(parsed)
+                .context("failed to parse device token response")?;
+            let access_token = tr
+                .access_token
+                .context("missing access_token in device token response")?;
+            let expires_at = tr.expires_in.map(|secs| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64
+                    + secs as i64
+            });
+            return Ok(Tokens {
+                access_token,
+                id_token: tr.id_token,
+                refresh_token: tr.refresh_token,
+                expires_at,
+                scope: tr.scope,
+            });
+        }
+
+        match err.as_deref() {
+            Some("authorization_pending") => continue,
+            Some("slow_down") => {
+                tokio::time::sleep(std::time::Duration::from_secs(interval + 5)).await;
+                continue;
+            }
+            Some("expired_token") => anyhow::bail!(
+                "device code expired; re-run `{} auth add --server`",
+                crate::BIN_NAME
+            ),
+            Some("access_denied") => anyhow::bail!("authorization denied by user"),
+            Some(other) => anyhow::bail!("device token error: {other}\n{text}"),
+            None => anyhow::bail!("device token error ({status}): {text}"),
+        }
+    }
+}
+
 // ── JWT Claim Helpers ──────────────────────────────────────────────────
 
 /// Decode the payload of a JWT and return (sub, email) without signature verification.
@@ -338,4 +459,50 @@ pub async fn fetch_launcher_data(access_token: &str, id_token: Option<&str>) -> 
     }
 
     anyhow::bail!("launcher data request failed with all available tokens");
+}
+
+#[derive(Debug, Deserialize)]
+struct ProfilesResponse {
+    #[serde(default)]
+    owner: Option<String>,
+    profiles: Vec<LauncherProfile>,
+}
+
+/// Fetch available game profiles via the `get-profiles` endpoint.
+///
+/// Used for the `hytale-server` client (dedicated servers), which may not have
+/// access to `get-launcher-data`. Returns (profiles, owner UUID).
+pub async fn fetch_profiles(access_token: &str) -> Result<(Vec<Profile>, Option<String>)> {
+    let client = reqwest::Client::new();
+
+    let resp = launcher_request(
+        &client,
+        reqwest::Method::GET,
+        &format!("{ACCOUNT_DATA_BASE}/my-account/get-profiles"),
+    )
+    .bearer_auth(access_token)
+    .send()
+    .await
+    .context("profiles request failed")?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("profiles error ({status}): {text}");
+    }
+
+    let pr: ProfilesResponse = resp
+        .json()
+        .await
+        .context("failed to parse profiles response")?;
+
+    let profiles = pr
+        .profiles
+        .into_iter()
+        .map(|p| Profile {
+            uuid: p.uuid,
+            username: p.username,
+        })
+        .collect();
+    Ok((profiles, pr.owner))
 }

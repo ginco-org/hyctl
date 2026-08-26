@@ -118,6 +118,18 @@ impl Config {
         None
     }
 
+    /// Find an account configured for dedicated server authentication
+    /// (client_id == "hytale-server"). Prefers the default account if it is one.
+    pub fn resolve_server_account(&self) -> Option<&Account> {
+        if let Some(label) = &self.default_account
+            && let Some(acct) = self.accounts.get(label)
+            && acct.client_id == "hytale-server"
+        {
+            return Some(acct);
+        }
+        self.accounts.values().find(|a| a.client_id == "hytale-server")
+    }
+
     pub fn resolve_profile<'a>(&self, account: &'a Account, profile: Option<&str>) -> Result<&'a Profile> {
         match profile {
             Some(p) => {

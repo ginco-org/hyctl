@@ -3,7 +3,8 @@ mod cli;
 use anyhow::{Context, Result};
 use clap::Parser;
 use cli::{AssetCommand, AuthCommand, Cli, Command};
-use hyctl::{auth, config, download, launch, BIN_NAME};
+use hyctl::{auth, config, download, launch, session, BIN_NAME};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -79,12 +80,14 @@ async fn handle_launch(
             &access_token,
             acct,
             prof,
-            &v.install_path,
+            &launch::LaunchOptions {
+                install_dir: &v.install_path,
+                server: server.as_deref(),
+                world: world.as_deref(),
+                extra_args,
+                background,
+            },
             &v.build,
-            server.as_deref(),
-            world.as_deref(),
-            extra_args,
-            background,
         )
         .await;
     }
@@ -122,7 +125,19 @@ async fn handle_launch(
         }
     };
 
-    launch::launch_game(&access_token, acct, prof, &install_dir, &build, server.as_deref(), world.as_deref(), extra_args, background).await
+    launch::launch_game(
+        &access_token,
+        acct,
+        prof,
+        &launch::LaunchOptions {
+            install_dir: &install_dir,
+            server: server.as_deref(),
+            world: world.as_deref(),
+            extra_args,
+            background,
+        },
+        &build,
+    ).await
 }
 
 // ── Serve ─────────────────────────────────────────────────────────────────
@@ -149,13 +164,18 @@ async fn handle_serve(
 
     let config = config::load_full_config();
 
-    let acct = if let Some(p) = profile.as_deref() {
+    let (acct, prof) = if let Some(p) = profile.as_deref() {
         config
             .find_account_for_profile(p)
-            .map(|(a, _)| a)
             .with_context(|| format!("profile '{p}' not found in any account"))?
+    } else if let Some(acct) = config.resolve_server_account() {
+        let prof = config.resolve_profile(acct, None)?;
+        (acct, prof)
     } else {
-        config.resolve_account(None)?
+        anyhow::bail!(
+            "no dedicated server account found. Run `{BIN_NAME} auth add --server` to add one.\n\
+             The `hytale-launcher` account cannot run a dedicated server — it lacks the `auth:server` scope."
+        );
     };
 
     let spec = version
@@ -197,8 +217,20 @@ async fn handle_serve(
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("failed to create server directory: {dir}"))?;
 
+    // Create a game session from our auth tokens and inject it into the
+    // server args — the server accepts --session-token / --identity-token
+    // (see Options.java), the same tokens the client uses for mutual auth.
+    info!("Creating game session for {} ({})", prof.username, prof.uuid);
+    let session_tokens = session::create_session(&access_token, &prof.uuid).await?;
+    let mut server_args = Vec::with_capacity(4 + extra_args.len());
+    server_args.push("--session-token".to_string());
+    server_args.push(session_tokens.session_token);
+    server_args.push("--identity-token".to_string());
+    server_args.push(session_tokens.identity_token);
+    server_args.extend_from_slice(extra_args);
+
     let jre = launch::ensure_jre(&install_dir).await?;
-    launch::launch_server(&install_dir, &jre, &data_dir, assets.as_deref(), extra_args, background)
+    launch::launch_server(&install_dir, &jre, &data_dir, assets.as_deref(), &server_args, background)
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -217,7 +249,12 @@ async fn handle_auth(cmd: AuthCommand) -> Result<()> {
                 } else {
                     ""
                 };
-                println!("{label}{default_mark}");
+                let kind = if acct.client_id == "hytale-server" {
+                    " (server)"
+                } else {
+                    ""
+                };
+                println!("{label}{kind}{default_mark}");
                 for p in &acct.profiles {
                     let mark = if acct.default_profile.as_deref() == Some(&p.uuid) {
                         " (default)"
@@ -230,47 +267,116 @@ async fn handle_auth(cmd: AuthCommand) -> Result<()> {
             Ok(())
         }
 
-        AuthCommand::Add => {
-            let tokens = auth::launcher_login().await?;
-
-            let account_label = tokens
-                .id_token
-                .as_deref()
-                .and_then(auth::decode_id_token_claims)
-                .map(|(sub, email)| email.unwrap_or(sub))
-                .context("id_token missing or unparseable; authentication failed")?;
+        AuthCommand::Add { server } => {
+            let (tokens, client_id) = if server {
+                println!("Starting device code flow for the hytale-server client...");
+                println!("This grants the `auth:server` scope required to run a dedicated server.\n");
+                (
+                    auth::device_login("hytale-server", "openid offline auth:server").await?,
+                    "hytale-server",
+                )
+            } else {
+                (auth::launcher_login().await?, "hytale-launcher")
+            };
 
             println!("Authenticated. Fetching profiles...");
-            let (profiles, default_profile) =
+            let (profiles, owner) = if server {
+                match auth::fetch_profiles(&tokens.access_token).await {
+                    Ok((profiles, owner)) => (profiles, owner),
+                    Err(e) => {
+                        eprintln!("warning: failed to fetch profiles: {e:#}");
+                        eprintln!("Re-run `{BIN_NAME} auth add --server` to retry.");
+                        (Vec::new(), None)
+                    }
+                }
+            } else {
                 match auth::fetch_launcher_data(&tokens.access_token, tokens.id_token.as_deref())
                     .await
                 {
-                    Ok(profiles) => {
-                        let default_profile = profiles.first().map(|p| p.uuid.clone());
-                        println!("Found {} profile(s):", profiles.len());
-                        for p in &profiles {
-                            println!("  {} ({})", p.username, p.uuid);
-                        }
-                        (profiles, default_profile)
-                    }
+                    Ok(profiles) => (profiles, None),
                     Err(e) => {
                         eprintln!("warning: failed to fetch profiles: {e:#}");
                         eprintln!("Re-run `{BIN_NAME} auth add` to retry.");
                         (Vec::new(), None)
                     }
-                };
+                }
+            };
+
+            let mut cfg = config::load_full_config();
+
+            let base_label = tokens
+                .id_token
+                .as_deref()
+                .and_then(auth::decode_id_token_claims)
+                .map(|(sub, email)| email.unwrap_or(sub))
+                .or(owner)
+                .unwrap_or_else(|| client_id.to_string());
+
+            let suffixed = format!("{base_label}#server");
+
+            // Decide the label for the new account, without clobbering a
+            // different-kind account that already exists under the same label.
+            //
+            //   - Launcher accounts always claim the bare label. If a server
+            //     account currently occupies it, move that server account to
+            //     `<label>#server` first.
+            //   - Server accounts use `<label>#server` when the bare label is held
+            //     by a launcher account; otherwise they take the bare label
+            //     (refreshing an existing server account in place).
+            let account_label = if server {
+                match cfg.accounts.get(&base_label) {
+                    Some(acct) if acct.client_id != "hytale-server" => {
+                        if cfg.accounts.contains_key(&suffixed) {
+                            anyhow::bail!(
+                                "account '{base_label}' (launcher) and '{suffixed}' (server) both already exist; \
+                             remove one first with `{BIN_NAME} auth remove`"
+                            );
+                        }
+                        suffixed
+                    }
+                    _ => base_label, // no conflict or existing server account — refresh in place
+                }
+            } else {
+                // Launcher: claim the bare label, relocating any server account.
+                if let Some(acct) = cfg.accounts.get(&base_label).cloned()
+                    && acct.client_id == "hytale-server"
+                {
+                    if cfg.accounts.contains_key(&suffixed) {
+                        anyhow::bail!(
+                            "account '{base_label}' (server) and '{suffixed}' (server) both already exist; \
+                             remove one first with `{BIN_NAME} auth remove`"
+                        );
+                    }
+                    // Move the existing server account to #server.
+                    let mut moved = acct;
+                    moved.label = suffixed.clone();
+                    cfg.accounts.remove(&base_label);
+                    cfg.accounts.insert(suffixed.clone(), moved);
+                }
+                base_label
+            };
+
+            if !profiles.is_empty() {
+                println!("Found {} profile(s):", profiles.len());
+                for p in &profiles {
+                    println!("  {} ({})", p.username, p.uuid);
+                }
+            }
+
+            let default_profile = profiles.first().map(|p| p.uuid.clone());
 
             let account = config::Account {
                 label: account_label.clone(),
                 tokens,
-                client_id: "hytale-launcher".to_string(),
+                client_id: client_id.to_string(),
                 profiles,
                 default_profile,
             };
 
-            let mut cfg = config::load_full_config();
             cfg.accounts.insert(account_label.clone(), account);
-            if cfg.default_account.is_none() {
+            // Only auto-set the default account for launcher accounts; server
+            // accounts are selected automatically by `hyctl serve`.
+            if cfg.default_account.is_none() && !server {
                 cfg.default_account = Some(account_label.clone());
             }
             config::save_full_config(&cfg)?;

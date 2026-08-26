@@ -5,18 +5,23 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tracing::info;
 
+/// Common run-time options shared by `launch` and `serve`.
+pub struct LaunchOptions<'a> {
+    pub install_dir: &'a Path,
+    pub server: Option<&'a str>,
+    pub world: Option<&'a str>,
+    pub extra_args: &'a [String],
+    pub background: bool,
+}
+
 pub async fn launch_game(
     access_token: &str,
     _account: &Account,
     profile: &Profile,
-    install_dir: &Path,
+    opts: &LaunchOptions<'_>,
     version_label: &str,
-    server: Option<&str>,
-    world: Option<&str>,
-    extra_args: &[String],
-    background: bool,
 ) -> Result<()> {
-    let client_bin = install_dir.join("Client").join("HytaleClient");
+    let client_bin = opts.install_dir.join("Client").join("HytaleClient");
 
     if !client_bin.exists() {
         anyhow::bail!(
@@ -28,13 +33,19 @@ pub async fn launch_game(
         )
     }
 
-    let jre = ensure_jre(install_dir).await?;
+    let jre = ensure_jre(opts.install_dir).await?;
     info!(
         "Creating game session for {} ({})",
         profile.username, profile.uuid
     );
     let session_tokens = session::create_session(access_token, &profile.uuid).await?;
-    launch_client(install_dir, &client_bin, &jre, profile, &session_tokens, server, world, extra_args, background)
+    launch_client(
+        opts,
+        &client_bin,
+        &jre,
+        profile,
+        &session_tokens,
+    )
 }
 
 pub async fn ensure_jre(install_dir: &Path) -> Result<PathBuf> {
@@ -48,21 +59,17 @@ pub async fn ensure_jre(install_dir: &Path) -> Result<PathBuf> {
     find_jre(install_dir)
 }
 fn launch_client(
-    install_dir: &Path,
+    opts: &LaunchOptions<'_>,
     client_bin: &Path,
     java_exec: &Path,
     profile: &crate::config::Profile,
     session_tokens: &crate::session::SessionTokens,
-    server: Option<&str>,
-    world: Option<&str>,
-    extra_args: &[String],
-    background: bool,
 ) -> Result<()> {
     let user_dir = config::data_dir().join("userdata");
-    let client_dir = client_bin.parent().unwrap_or(install_dir);
+    let client_dir = client_bin.parent().unwrap_or(opts.install_dir);
 
     info!("Launching {}", client_bin.display());
-    info!("  --app-dir:   {}", install_dir.display());
+    info!("  --app-dir:   {}", opts.install_dir.display());
     info!("  --user-dir:  {}", user_dir.display());
     info!("  --java-exec: {}", java_exec.display());
 
@@ -78,7 +85,7 @@ fn launch_client(
     let mut cmd = std::process::Command::new(client_bin);
     cmd.current_dir(client_dir);
     cmd.env("LD_LIBRARY_PATH", new_ld);
-    cmd.arg("--app-dir").arg(install_dir);
+    cmd.arg("--app-dir").arg(opts.install_dir);
     cmd.arg("--user-dir").arg(&user_dir);
     cmd.arg("--java-exec").arg(java_exec);
     cmd.arg("--auth-mode").arg("authenticated");
@@ -86,17 +93,17 @@ fn launch_client(
     cmd.arg("--name").arg(&profile.username);
     cmd.arg("--session-token").arg(&session_tokens.session_token);
     cmd.arg("--identity-token").arg(&session_tokens.identity_token);
-    if let Some(server) = server {
+    if let Some(server) = opts.server {
         cmd.arg("--server").arg(server);
     }
-    if let Some(world) = world {
+    if let Some(world) = opts.world {
         cmd.arg("--world").arg(world);
     }
-    for arg in extra_args {
+    for arg in opts.extra_args {
         cmd.arg(arg);
     }
 
-    spawn_or_wait(&mut cmd, "HytaleClient", background)
+    spawn_or_wait(&mut cmd, "HytaleClient", opts.background)
 }
 
 pub fn launch_server(
