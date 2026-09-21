@@ -66,8 +66,8 @@ pub async fn launcher_login() -> Result<Tokens> {
     // Random inner state for CSRF protection.
     let inner_state = {
         let mut rng = rand::thread_rng();
-        let bytes: Vec<u8> = (0..16).map(|_| rng.r#gen()).collect();
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes)
+        let bytes: [u8; 16] = std::array::from_fn(|_| rng.r#gen());
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
     };
 
     // The launcher encodes state as base64({"state":"...","port":"..."}).

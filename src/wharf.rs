@@ -103,16 +103,20 @@ pub fn apply_patch(pwr_path: &Path, dest_dir: &Path) -> Result<()> {
                     .with_context(|| format!("failed to write file: {}", full.display()))?;
 
                 // Apply permissions from container mode, then detect executables.
-                let final_mode = if file_data.starts_with(b"\x7fELF") || file_data.starts_with(b"#!") {
-                    *mode | 0o111
-                } else {
-                    *mode
-                };
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
+                    let final_mode = if file_data.starts_with(b"\x7fELF")
+                        || file_data.starts_with(b"#!")
+                    {
+                        *mode | 0o111
+                    } else {
+                        *mode
+                    };
                     std::fs::set_permissions(&full, std::fs::Permissions::from_mode(final_mode))
-                        .with_context(|| format!("failed to set permissions on: {}", full.display()))?;
+                        .with_context(|| {
+                            format!("failed to set permissions on: {}", full.display())
+                        })?;
                 }
             }
         }

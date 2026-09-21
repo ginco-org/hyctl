@@ -215,8 +215,6 @@ pub fn save_config(config: &Config) -> Result<()> {
 
 // ── Token-file helpers (stored alongside config, mode 600) ───────────────
 
-use std::os::unix::fs::PermissionsExt;
-
 fn read_token_file(label: &str) -> Result<Option<Tokens>> {
     let path = tokens_path(label);
     match fs::read_to_string(&path) {
@@ -234,10 +232,15 @@ fn write_token_file(label: &str, tokens: &Tokens) -> Result<()> {
     let path = tokens_path(label);
     let text = serde_json::to_string_pretty(tokens).context("failed to serialize tokens")?;
     fs::write(&path, &text).context("failed to write token file")?;
-    // Restrict permissions to owner-only.
-    let mut perms = fs::metadata(&path)?.permissions();
-    perms.set_mode(0o600);
-    fs::set_permissions(&path, perms)?;
+    // Restrict permissions to owner-only (no-op equivalent on Windows,
+    // where the user profile directory already restricts access).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&path)?.permissions();
+        perms.set_mode(0o600);
+        fs::set_permissions(&path, perms)?;
+    }
     Ok(())
 }
 
