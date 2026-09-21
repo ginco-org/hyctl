@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  # Manual runs build + package all targets as a rehearsal; the publish
+  # job below is skipped so releases are only ever created by tag pushes.
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN: hyctl
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu, archive: tar.gz }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl, archive: tar.gz }
+          - { os: macos-latest, target: aarch64-apple-darwin, archive: tar.gz }
+          - { os: macos-13, target: x86_64-apple-darwin, archive: tar.gz }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
+    runs-on: ${{ matrix.os }}
+    env:
+      archive_name: hyctl-${{ matrix.target }}.${{ matrix.archive }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # musl builds link with musl-gcc; ring (via rustls) compiles a C shim,
+      # so the GNU toolchain is required over plain musl-gcc.
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build (release)
+        run: cargo build --locked --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
+
+      - name: Package (unix)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          pkgname="hyctl-${{ matrix.target }}"
+          mkdir -p "$pkgname"
+          cp "target/${{ matrix.target }}/release/${BIN}" "$pkgname/"
+          cp README.md "$pkgname/"
+          tar czf "$archive_name" "$pkgname"
+          rm -rf "$pkgname"
+          shasum -a 256 "$archive_name" > "$archive_name.sha256"
+
+      - name: Package (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $pkgname = "hyctl-${{ matrix.target }}"
+          New-Item -ItemType Directory -Force -Path $pkgname | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/${env:BIN}.exe" "$pkgname/"
+          Copy-Item README.md "$pkgname/"
+          Compress-Archive -Path $pkgname -DestinationPath $env:archive_name
+          Remove-Item $pkgname -Recurse
+          # Hash the archive bytes (not tar-style "file + name") so the file
+          # can still be verified while the archive is in use.
+          $hash = (Get-FileHash $env:archive_name -Algorithm SHA256).Hash.ToLower()
+          "$hash  $env:archive_name" | Out-File "$env:archive_name.sha256" -NoNewline -Encoding ascii
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            hyctl-*
+            !hyctl-*/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Check release does not exist
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        if: steps.check.outputs.exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+
+      - name: Upload assets to existing release
+        if: steps.check.outputs.exists == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber

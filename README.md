@@ -30,6 +30,20 @@ CLI for installing and launching the Hytale game client, with multi-account, pro
 
 ## Install
 
+### Download a binary
+
+Grab a prebuilt binary from the [releases page](https://github.com/ginco-org/hyctl/releases) — no Nix or Rust required:
+
+```sh
+# Linux x86_64 (glibc)
+curl -LO https://github.com/ginco-org/hyctl/releases/latest/download/hyctl-x86_64-unknown-linux-gnu.tar.gz
+tar xzf hyctl-x86_64-unknown-linux-gnu.tar.gz
+sudo mv hyctl-x86_64-unknown-linux-gnu/hyctl /usr/local/bin/
+```
+
+Also published per release: Linux x86_64 (musl, static), macOS Apple silicon
+and Intel, Windows x86_64 (`.zip`), and a SHA-256 checksum for every archive.
+
 ### With Nix
 
 ```sh
