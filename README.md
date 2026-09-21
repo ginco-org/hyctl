@@ -42,7 +42,8 @@ sudo mv hyctl-x86_64-unknown-linux-gnu/hyctl /usr/local/bin/
 ```
 
 Also published per release: Linux x86_64 (musl, static), macOS Apple silicon
-and Intel, Windows x86_64 (`.zip`), and a SHA-256 checksum for every archive.
+(only — Hytale does not run on Intel macs), Windows x86_64 (`.zip`), and a
+SHA-256 checksum for every archive.
 
 ### With Nix
 
